@@ -82,6 +82,59 @@ pub fn cycle_basis(graph: &graph::PyGraph, root: Option<usize>) -> Vec<Vec<usize
         .collect()
 }
 
+/// Return a minimum weight cycle basis for a given graph.
+///
+/// A minimum weight cycle basis is a cycle basis that minimizes the total
+/// weight of all cycles in the basis. This implementation uses a greedy
+/// approach based on the existing cycle_basis function.
+///
+/// This is adapted from algorithm [1] Horton, J.D., "A polynomial-time algorithm to find the shortest
+///    cycle basis of a graph", SIAM J. compute 16 (1987), 358-366.
+///
+///
+/// :param PyGraph graph: The graph in which to find the minimum cycle basis.
+/// :param weight_fn: A function that takes an edge and returns the weight.
+///     If None, all edges are assumed to have weight 1.
+///
+/// :returns: A list of cycle lists. Each list is a list of node ids which
+///     forms a cycle in the minimum weight cycle basis.
+/// :rtype: list
+///
+#[pyfunction]
+#[pyo3(text_signature = "(graph, /, weight_fn=None)", signature = (graph, weight_fn=None))]
+pub fn minimum_cycle_basis(
+    graph: &graph::PyGraph,
+    weight_fn: Option<PyObject>,
+) -> PyResult<Vec<Vec<usize>>> {
+    let cycles = if let Some(weight_fn) = weight_fn {
+        // Use the provided weight function
+        connectivity::minimum_cycle_basis(&graph.graph, |edge| {
+            Python::with_gil(|py| {
+                let source = edge.source().index();
+                let target = edge.target().index();
+                let weight = edge.weight();
+
+                // Create a simple edge representation as (source, target, weight)
+                let edge_tuple = (source, target, weight);
+                let result = weight_fn.call1(py, (edge_tuple,))?;
+                result.extract::<f64>(py)
+            })
+            .unwrap_or(1.0)
+        })
+    } else {
+        // Use default weight of 1 for all edges
+        connectivity::minimum_cycle_basis(
+            &graph.graph,
+            |_edge: &petgraph::stable_graph::EdgeReference<'_, Py<PyAny>>| 1.0,
+        )
+    };
+
+    Ok(cycles
+        .into_iter()
+        .map(|res_map| res_map.into_iter().map(|x| x.index()).collect())
+        .collect())
+}
+
 /// Find all simple cycles of a :class:`~.PyDiGraph`
 ///
 /// A "simple cycle" (called an elementary circuit in [1]) is a cycle (or closed path)

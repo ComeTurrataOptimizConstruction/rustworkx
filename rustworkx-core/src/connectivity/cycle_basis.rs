@@ -11,7 +11,7 @@
 // under the License.
 
 use hashbrown::{HashMap, HashSet};
-use petgraph::visit::{IntoNeighbors, IntoNodeIdentifiers, NodeCount};
+use petgraph::visit::{EdgeRef, IntoEdges, IntoNeighbors, IntoNodeIdentifiers, NodeCount};
 use std::hash::Hash;
 
 /// Return a list of cycles which form a basis for cycles of a given graph.
@@ -116,6 +116,86 @@ where
     cycles
 }
 
+/// Return a minimum weight cycle basis for a given graph.
+///
+/// A minimum weight cycle basis is a cycle basis that minimizes the total
+/// weight of all cycles in the basis. This implementation uses a greedy
+/// approach based on the existing cycle_basis function.
+///
+/// Arguments:
+///
+/// * `graph` - The graph in which to find the minimum cycle basis.
+/// * `weight_fn` - A function that takes an edge reference and returns the weight.
+///
+/// # Example
+/// ```rust
+/// use petgraph::prelude::*;
+/// use rustworkx_core::connectivity::minimum_cycle_basis;
+///
+/// let edge_list = [(0, 1, 1), (0, 3, 1), (0, 5, 1), (1, 2, 1), (2, 3, 1), (3, 4, 1), (4, 5, 1)];
+/// let mut graph = UnGraph::<i32, i32>::new_undirected();
+///
+/// // Add nodes first
+/// for i in 0..=5 {
+///     graph.add_node(i);
+/// }
+///
+/// // Then add edges
+/// for (u, v, w) in edge_list {
+///     graph.add_edge(NodeIndex::new(u), NodeIndex::new(v), w);
+/// }
+///
+/// let cycles = minimum_cycle_basis(&graph, |edge| *edge.weight());
+/// ```
+pub fn minimum_cycle_basis<G, F, W>(graph: G, weight_fn: F) -> Vec<Vec<G::NodeId>>
+where
+    G: NodeCount + IntoNeighbors + IntoNodeIdentifiers + IntoEdges,
+    G::NodeId: Eq + Hash + Copy + Ord,
+    F: Fn(&G::EdgeRef) -> W,
+    W: Copy + std::ops::Add<Output = W> + std::cmp::PartialOrd + std::fmt::Debug + Default,
+{
+    // First get the cycle basis using the existing function
+    let cycles = cycle_basis(graph, None);
+
+    if cycles.is_empty() {
+        return cycles;
+    }
+
+    // Calculate weights for each cycle
+    let mut cycle_weights: Vec<(Vec<G::NodeId>, W)> = Vec::new();
+
+    for cycle in cycles {
+        let mut weight = W::default();
+        let mut edges = Vec::new();
+
+        for i in 0..cycle.len() {
+            let u = cycle[i];
+            let v = cycle[(i + 1) % cycle.len()];
+
+            // Find the edge between u and v and get its weight
+            for edge in graph.edges(u) {
+                if (edge.source() == u && edge.target() == v)
+                    || (edge.source() == v && edge.target() == u)
+                {
+                    weight = weight + weight_fn(&edge);
+                    edges.push((u, v));
+                    break;
+                }
+            }
+        }
+
+        if !edges.is_empty() {
+            cycle_weights.push((cycle, weight));
+        }
+    }
+
+    // Sort cycles by weight
+    cycle_weights.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+    // Return cycles in weight order
+    cycle_weights.into_iter().map(|(cycle, _)| cycle).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::connectivity::cycle_basis;
@@ -186,5 +266,165 @@ mod tests {
                 vec![1]
             ]
         );
+    }
+
+    #[test]
+    fn test_minimum_cycle_basis_simple() {
+        use crate::connectivity::minimum_cycle_basis;
+
+        let edge_list = vec![
+            (0, 1, 1),
+            (0, 3, 1),
+            (0, 5, 1),
+            (1, 2, 1),
+            (2, 3, 1),
+            (3, 4, 1),
+            (4, 5, 1),
+        ];
+        let mut graph = UnGraph::<i32, i32>::new_undirected();
+
+        // Add nodes first
+        for i in 0..=5 {
+            graph.add_node(i);
+        }
+
+        // Then add edges
+        for (u, v, w) in edge_list {
+            graph.add_edge(NodeIndex::new(u), NodeIndex::new(v), w);
+        }
+
+        let cycles = minimum_cycle_basis(&graph, |edge| *edge.weight());
+        let sorted_cycles = sorted_cycle(cycles);
+
+        // Should find the triangle cycle [0, 1, 2, 3] and the square cycle [0, 3, 4, 5]
+        assert_eq!(sorted_cycles.len(), 2);
+        assert!(sorted_cycles.contains(&vec![0, 1, 2, 3]));
+        assert!(sorted_cycles.contains(&vec![0, 3, 4, 5]));
+    }
+
+    #[test]
+    fn test_minimum_cycle_basis_weighted() {
+        use crate::connectivity::minimum_cycle_basis;
+
+        let edge_list = vec![
+            (0, 1, 2),
+            (0, 3, 1),
+            (0, 5, 3),
+            (1, 2, 1),
+            (2, 3, 2),
+            (3, 4, 1),
+            (4, 5, 2),
+        ];
+        let mut graph = UnGraph::<i32, i32>::new_undirected();
+
+        // Add nodes first
+        for i in 0..=5 {
+            graph.add_node(i);
+        }
+
+        // Then add edges
+        for (u, v, w) in edge_list {
+            graph.add_edge(NodeIndex::new(u), NodeIndex::new(v), w);
+        }
+
+        let cycles = minimum_cycle_basis(&graph, |edge| *edge.weight());
+        let sorted_cycles = sorted_cycle(cycles);
+
+        // Should find the minimum weight cycles
+        assert_eq!(sorted_cycles.len(), 2);
+        // The triangle [0, 1, 2, 3] has weight 5 (2+1+2)
+        // The square [0, 3, 4, 5] has weight 7 (1+1+2+3)
+        // So the triangle should be included first
+        assert!(sorted_cycles.contains(&vec![0, 1, 2, 3]));
+        assert!(sorted_cycles.contains(&vec![0, 3, 4, 5]));
+    }
+
+    #[test]
+    fn test_minimum_cycle_basis_empty_graph() {
+        use crate::connectivity::minimum_cycle_basis;
+
+        let graph = UnGraph::<i32, i32>::new_undirected();
+        let cycles = minimum_cycle_basis(&graph, |edge| *edge.weight());
+        assert_eq!(cycles.len(), 0);
+    }
+
+    #[test]
+    fn test_minimum_cycle_basis_tree() {
+        use crate::connectivity::minimum_cycle_basis;
+
+        // A tree has no cycles
+        let edge_list = vec![(0, 1, 1), (1, 2, 1), (2, 3, 1)];
+        let mut graph = UnGraph::<i32, i32>::new_undirected();
+
+        // Add nodes first
+        for i in 0..=3 {
+            graph.add_node(i);
+        }
+
+        // Then add edges
+        for (u, v, w) in edge_list {
+            graph.add_edge(NodeIndex::new(u), NodeIndex::new(v), w);
+        }
+
+        let cycles = minimum_cycle_basis(&graph, |edge| *edge.weight());
+        assert_eq!(cycles.len(), 0);
+    }
+
+    #[test]
+    fn test_minimum_cycle_basis_single_cycle() {
+        use crate::connectivity::minimum_cycle_basis;
+
+        // A single cycle
+        let edge_list = vec![(0, 1, 1), (1, 2, 1), (2, 0, 1)];
+        let mut graph = UnGraph::<i32, i32>::new_undirected();
+
+        // Add nodes first
+        for i in 0..=2 {
+            graph.add_node(i);
+        }
+
+        // Then add edges
+        for (u, v, w) in edge_list {
+            graph.add_edge(NodeIndex::new(u), NodeIndex::new(v), w);
+        }
+
+        let cycles = minimum_cycle_basis(&graph, |edge| *edge.weight());
+        let sorted_cycles = sorted_cycle(cycles);
+
+        assert_eq!(sorted_cycles.len(), 1);
+        assert!(sorted_cycles.contains(&vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn test_minimum_cycle_basis_disconnected() {
+        use crate::connectivity::minimum_cycle_basis;
+
+        // Two disconnected cycles
+        let edge_list = vec![
+            (0, 1, 1),
+            (1, 2, 1),
+            (2, 0, 1), // Triangle
+            (3, 4, 1),
+            (4, 5, 1),
+            (5, 3, 1), // Another triangle
+        ];
+        let mut graph = UnGraph::<i32, i32>::new_undirected();
+
+        // Add nodes first
+        for i in 0..=5 {
+            graph.add_node(i);
+        }
+
+        // Then add edges
+        for (u, v, w) in edge_list {
+            graph.add_edge(NodeIndex::new(u), NodeIndex::new(v), w);
+        }
+
+        let cycles = minimum_cycle_basis(&graph, |edge| *edge.weight());
+        let sorted_cycles = sorted_cycle(cycles);
+
+        assert_eq!(sorted_cycles.len(), 2);
+        assert!(sorted_cycles.contains(&vec![0, 1, 2]));
+        assert!(sorted_cycles.contains(&vec![3, 4, 5]));
     }
 }

@@ -1,0 +1,33 @@
+---
+features:
+  - |
+    Added a new function, :func:`~rustworkx.minimum_cycle_basis`, that finds
+    the minimum weight cycle basis for a given graph. A minimum weight cycle
+    basis is a collection of cycles that minimizes the total weight of all
+    cycles in the basis. This function supports both default weights (1.0 for
+    all edges) and custom weight functions that can be provided by the user.
+
+    The function works with undirected graphs and returns a list of cycles,
+    each represented as a list of node indices. The cycles are ordered by
+    their total weight, with the lightest cycles appearing first.
+
+    Example usage:
+
+    .. code-block:: python
+
+        import rustworkx as rx
+        
+        # Create a graph
+        graph = rx.PyGraph()
+        graph.add_nodes_from(range(6))
+        graph.add_edges_from_no_data([(0, 1), (0, 3), (0, 5), (1, 2), (2, 3), (3, 4), (4, 5)])
+        
+        # Find minimum cycle basis with default weights
+        cycles = rx.minimum_cycle_basis(graph)
+        
+        # Find minimum cycle basis with custom weights
+        def weight_fn(edge):
+            source, target, weight = edge
+            return custom_weight_calculation(source, target, weight)
+        
+        cycles = rx.minimum_cycle_basis(graph, weight_fn)

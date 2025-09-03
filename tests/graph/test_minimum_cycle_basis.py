@@ -15,8 +15,9 @@ import unittest
 import rustworkx
 
 
-class TestCycleBasis(unittest.TestCase):
+class TestMinimumCycleBasis(unittest.TestCase):
     def setUp(self):
+        """Set up test fixtures."""
         self.graph = rustworkx.PyGraph()
         self.graph.add_nodes_from(list(range(10)))
         self.graph.add_edges_from_no_data(
@@ -35,38 +36,6 @@ class TestCycleBasis(unittest.TestCase):
                 (8, 9),
             ]
         )
-
-    def test_cycle_basis(self):
-        graph = rustworkx.PyGraph()
-        graph.add_nodes_from(list(range(6)))
-        graph.add_edges_from_no_data([(0, 1), (0, 3), (0, 5), (1, 2), (2, 3), (3, 4), (4, 5)])
-        res = sorted(sorted(c) for c in rustworkx.cycle_basis(graph, 0))
-        self.assertEqual([[0, 1, 2, 3], [0, 3, 4, 5]], res)
-
-    def test_cycle_basis_multiple_roots_same_cycles(self):
-        res = sorted(sorted(x) for x in rustworkx.cycle_basis(self.graph, 0))
-        self.assertEqual(res, [[0, 1, 2, 3], [0, 1, 6, 7, 8], [0, 3, 4, 5]])
-        res = sorted(sorted(x) for x in rustworkx.cycle_basis(self.graph, 1))
-        self.assertEqual(res, [[0, 1, 2, 3], [0, 1, 6, 7, 8], [0, 3, 4, 5]])
-        res = sorted(sorted(x) for x in rustworkx.cycle_basis(self.graph, 9))
-        self.assertEqual(res, [[0, 1, 2, 3], [0, 1, 6, 7, 8], [0, 3, 4, 5]])
-
-    def test_cycle_basis_disconnected_graphs(self):
-        self.graph.add_nodes_from(["A", "B", "C"])
-        self.graph.add_edges_from_no_data([(10, 11), (10, 12), (11, 12)])
-        cycles = rustworkx.cycle_basis(self.graph, 9)
-        res = sorted(sorted(x) for x in cycles[:-1]) + [sorted(cycles[-1])]
-        self.assertEqual(res, [[0, 1, 2, 3], [0, 1, 6, 7, 8], [0, 3, 4, 5], [10, 11, 12]])
-
-    def test_invalid_types(self):
-        digraph = rustworkx.PyDiGraph()
-        with self.assertRaises(TypeError):
-            rustworkx.cycle_basis(digraph)
-
-    def test_self_loop(self):
-        self.graph.add_edge(1, 1, None)
-        res = sorted(sorted(c) for c in rustworkx.cycle_basis(self.graph, 0))
-        self.assertEqual([[0, 1, 2, 3], [0, 1, 6, 7, 8], [0, 3, 4, 5], [1]], res)
 
     def test_minimum_cycle_basis_default_weights(self):
         """Test minimum_cycle_basis with default weights."""
@@ -115,3 +84,76 @@ class TestCycleBasis(unittest.TestCase):
         digraph = rustworkx.PyDiGraph()
         with self.assertRaises(TypeError):
             rustworkx.minimum_cycle_basis(digraph)
+
+    def test_minimum_cycle_basis_single_cycle(self):
+        """Test minimum_cycle_basis with a single cycle."""
+        graph = rustworkx.PyGraph()
+        graph.add_nodes_from(list(range(3)))
+        graph.add_edges_from_no_data([(0, 1), (1, 2), (2, 0)])
+
+        cycles = rustworkx.minimum_cycle_basis(graph)
+        res = sorted(sorted(c) for c in cycles)
+        self.assertEqual([[0, 1, 2]], res)
+
+    def test_minimum_cycle_basis_disconnected_cycles(self):
+        """Test minimum_cycle_basis with disconnected cycles."""
+        graph = rustworkx.PyGraph()
+        graph.add_nodes_from(list(range(6)))
+        graph.add_edges_from_no_data(
+            [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)]  # Triangle  # Another triangle
+        )
+
+        cycles = rustworkx.minimum_cycle_basis(graph)
+        res = sorted(sorted(c) for c in cycles)
+        self.assertEqual([[0, 1, 2], [3, 4, 5]], res)
+
+    def test_minimum_cycle_basis_weighted_edges(self):
+        """Test minimum_cycle_basis with weighted edges."""
+        graph = rustworkx.PyGraph()
+        graph.add_nodes_from(list(range(6)))
+        graph.add_edges_from_no_data([(0, 1), (0, 3), (0, 5), (1, 2), (2, 3), (3, 4), (4, 5)])
+
+        def weight_fn(edge):
+            source, target, weight = edge
+            # Make some edges more expensive to test weight-based ordering
+            if (source == 0 and target == 1) or (source == 1 and target == 0):
+                return 2.0
+            if (source == 0 and target == 5) or (source == 5 and target == 0):
+                return 3.0
+            return 1.0
+
+        cycles = rustworkx.minimum_cycle_basis(graph, weight_fn)
+        res = sorted(sorted(c) for c in cycles)
+        # Should still find the same cycles but ordered by weight
+        self.assertEqual([[0, 1, 2, 3], [0, 3, 4, 5]], res)
+
+    def test_minimum_cycle_basis_self_loop(self):
+        """Test minimum_cycle_basis with self loops."""
+        self.graph.add_edge(1, 1, None)
+        cycles = rustworkx.minimum_cycle_basis(self.graph)
+        # Should handle self loops gracefully
+        self.assertIsInstance(cycles, list)
+
+    def test_minimum_cycle_basis_large_graph(self):
+        """Test minimum_cycle_basis with a larger graph."""
+        graph = rustworkx.PyGraph()
+        graph.add_nodes_from(list(range(8)))
+        graph.add_edges_from_no_data(
+            [
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 0),  # Square
+                (4, 5),
+                (5, 6),
+                (6, 7),
+                (7, 4),  # Another square
+                (0, 4),
+                (1, 5),  # Connecting edges
+            ]
+        )
+
+        cycles = rustworkx.minimum_cycle_basis(graph)
+        res = sorted(sorted(c) for c in cycles)
+        # Should find the two squares plus the cycle through connecting edges
+        self.assertEqual([[0, 1, 2, 3], [0, 1, 4, 5], [4, 5, 6, 7]], res)
